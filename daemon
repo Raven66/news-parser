@@ -1,0 +1,106 @@
+import sys
+import os
+import time
+from signal import SIGTERM
+
+class Daemon():
+
+
+	def __init__(self, daemon_log, daemon_pid, daemon_place, daemon_sleep):
+		self.daemon_log = daemon_log
+		self.daemon_pid = daemon_pid
+		self.daemon_place = daemon_place
+		self.daemon_sleep = daemon_sleep
+
+
+	def deamonize(self, stdout='/dev/null', stderr=None, stdin='/dev/null', pidfile=None, startmsg='started with pid %s'):
+		#first fork
+		try:
+			pid = os.fork()
+			if pid > 0:
+				sys.exit(0)#exiting first paraent
+		except OSError as e:
+			#if error telling about this
+			sys.stderr.write("Fork #1 failed: (%s) %s\n" % (e.errno, e.strerror))
+			sys.exit(1)
+
+		#change directory
+		os.chdir(self.daemon_place)
+		os.umask(0)
+		os.setsid()
+
+		#second fork
+		try:
+			pid = os.fork()
+			if pid > 0:
+				sys.exit(0)
+		except OSError as e:
+			#if error telling about this
+			sys.stderr.write("Fork #2 failed: (%s) %s\n" % (e.errno, e.strerror))
+			sys.exit(1)
+
+		if not stderr:
+			stderr = stdout
+
+			print(stdin, stdout, stderr)
+			si = open(stdin, 'r')
+			so = open(stdout, 'a+')
+			se = open(stderr, 'a+')
+			pid = str(os.getpid())
+			sys.stderr.write("\n%s\n" % startmsg % pid)
+			sys.stderr.flush()
+		if pidfile: open(pidfile, 'w+').write("%s\n" % pid)
+
+		os.dup2(si.fileno(), sys.stdin.fileno())
+		os.dup2(so.fileno(), sys.stdout.fileno())
+		os.dup2(se.fileno(), sys.stderr.fileno())
+
+
+	def startstop(self, stdout='/dev/null', stderr=None, stdin='/dev/null', pidfile='pid.txt', startmsg='Started with pid %s'):
+		if len(sys.argv) > 1:
+			action = sys.argv[1]
+			try:
+				pf = open(pidfile)
+				pid = pf.read().strip()
+				pf.close()
+			except IOError:
+				pid = None
+			if action == 'stop' or action == 'restart':
+				if not pid:
+					mess = "Не могу остановить, pid файл '%s' отсутствует.\n"
+					sys.stderr.write(mess % pidfile)
+					sys.exit(1)
+				try:
+					while 1:
+						os.kill(int(pid), SIGTERM)
+						time.sleep(1)
+				except OSError as err:
+					err = str(err)
+					if err.find('No such process') > 0:
+						os.remove(pidfile)
+						if action == 'stop':
+							sys.exit(0)
+						action = 'start'
+						pid = None
+					else:
+						print(str(err))
+						sys.exit(1)
+			if action == 'start':
+				if pid:
+					mess = "Старт отменен - pid файл '%s' существует.\n"
+					sys.stderr.write(mess % pidfile)
+					print(mess % pidfile)
+					sys.exit(1)
+				self.deamonize(stdout, stderr, stdin, pidfile, startmsg)
+				return
+		print("Синтаксис запуска: %s start|stop|restart" % sys.argv[0])
+		sys.exit(2)
+
+
+daemon_log = '/home/raven666/python/projects/news-parser/daemon/daemonizer.log'
+daemon_pid = '/home/raven666/python/projects/news-parser/daemon/pid.txt'
+daemon_place = '/home/raven666/python/projects/news-parser/daemon'
+daemon_sleep = 10
+
+daemon = Daemon(daemon_log, daemon_pid, daemon_place, daemon_sleep)
+daemon.startstop(stdout = daemon_log, pidfile = daemon_pid)
